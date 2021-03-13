@@ -3,10 +3,10 @@
 import serial
 from time import sleep
 import logging
-from .exceptions import MK312COMInterfaceException, MK312COMChecksumException, MK312COMReceivingLengthException, \
-    MK312COMWriteDataValueException, MK312COMHandshakeException
+from .exceptions import MK312ReceivingLengthException, MK312ChecksumException, MK312WriteDataValueException, \
+    MK312HandshakeException
 from .constants import ADDRESS_COMMAND_1, ADDRESS_CURRENT_MODE, ADDRESS_POWER_LEVEL, ADDRESS_R15, ADDRESS_LEVELA, \
-    ADDRESS_LEVELB, ADDRESS_MA_MAX_VALUE, ADDRESS_MA_MIN_VALUE, ADDRESS_LEVELMA
+    ADDRESS_LEVELB, ADDRESS_MA_MAX_VALUE, ADDRESS_MA_MIN_VALUE, ADDRESS_LEVELMA, ADDRESS_KEY
 from .constants import COMMAND_START_FAVORITE_MODULE, COMMAND_EXIT_MENU, COMMAND_NEW_MODE
 from .constants import MODE_WAVES
 from .constants import POWERLEVEL_NORMAL
@@ -19,15 +19,20 @@ log = logging.getLogger(__name__)
 
 
 class MK312CommunicationWrapper(object):
-    def __init__(self, device: str = '/dev/cu.usbserial', baudrate: int = 19200, timeout: float = 2.0,
-                 key: int = None):
-        '''
+    def __init__(self,
+                 device: str = '/dev/cu.usbserial',
+                 baudrate: int = 19200,
+                 timeout: float = 0.5,
+                 key: int = None,
+                 handshake_repeat: int = 10):
+        """
         Init the communication wrapper with some settings for the serial port which the MK312 is connected to.
         :param device: RS232-USB converter or directly accessible RS232 interface.
         :param baudrate: The baudrate is normally 19200 baud.
         :param timeout: The timeout for the serial communication.
         :param key: You can specify an encryption key for the communication.
-        '''
+        :param handshake_repeat: How often do we try to wait for the handshake of the device.
+        """
 
         self.device = device
         log.debug('Use serial port: %s' % self.device)
@@ -38,19 +43,25 @@ class MK312CommunicationWrapper(object):
         self.key = key
         if self.key is not None:
             log.debug('Key: 0x%0.2X' % self.key)
+        self.handshake_repeat = handshake_repeat
         self._openserialport()
 
     def _openserialport(self):
-        '''
+        """
         We are trying to open the interface.
-        :return: True if open.
-        '''
+        :return: True if open, else it throws an exception.
+        """
 
         try:
             # Opening the serial port
-            self.port = serial.Serial(self.device, baudrate=self.baudrate, bytesize=serial.EIGHTBITS,
-                                      parity=serial.PARITY_NONE, stopbits=serial.STOPBITS_ONE, timeout=self.timeout,
-                                      xonxoff=serial.XOFF, rtscts=False)
+            self.port = serial.Serial(self.device,
+                                      baudrate=self.baudrate,
+                                      bytesize=serial.EIGHTBITS,
+                                      parity=serial.PARITY_NONE,
+                                      stopbits=serial.STOPBITS_ONE,
+                                      timeout=self.timeout,
+                                      xonxoff=serial.XOFF,
+                                      rtscts=False)
             if self.port.is_open:
                 # Closing the serial port if it is already open and use the properties above for reopen
                 log.debug('Serial port is already open - closing it and reopen using the settings for MK-312.')
@@ -61,18 +72,15 @@ class MK312CommunicationWrapper(object):
             if self.port.isOpen:
                 log.debug('Serial port opened successful.')
                 return True
-            else:
-                log.error('')
-                raise MK312COMInterfaceException(message='Can\'t open interface: %s' % self.device)
         except Exception as e:
             raise e
 
     def readaddress(self, address: int = 0x00fd):
-        '''
-        Read data from the MK-312.
+        """
+        Read data from the MK-312 of the given address.
         :param address: The address (int) from which we like to read.
-        :return: The content of the address as int value.
-        '''
+        :return: The content of the address as int value / flase if reading failed.
+        """
 
         log.debug('Reading address: 0x%0.2X' % address)
 
@@ -83,8 +91,8 @@ class MK312CommunicationWrapper(object):
         checksum = sum(send_data) % 256
 
         # Append the checksum to data
-        send_data.append(checksum)
         log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
+        send_data.append(checksum)
 
         # Encrypt if the key is not None
         if self.key:
@@ -98,25 +106,29 @@ class MK312CommunicationWrapper(object):
         read_data = self.port.read(3)
         log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
 
-        if len(read_data) is not 3:
-            raise MK312COMReceivingLengthException(message='Not all data received.')
+        # We have no data read -> maybe the key is wrong?
+        if len(read_data) == 0:
+            return False
+
+        if len(read_data) != 3:
+            raise MK312ReceivingLengthException('Reading failed getting %i bytes.' % len(read_data))
 
         # Get the checksum from the received data
         checksum = read_data[-1]
         log.debug('Checksum of read data: 0x%0.2X' % checksum)
         s = sum(read_data[:-1]) % 256
         if s != checksum:
-            raise MK312COMChecksumException(message='Checksum of read data is incorrect: 0x%0.2X != 0x%0.2X' % (checksum, s))
+            raise MK312ChecksumException('Checksum of read data is incorrect: 0x%0.2X != 0x%0.2X' % (checksum, s))
 
         # Return the data
         log.debug('Address: 0x%0.2X content: 0x%0.2X' % (address, read_data[1]))
         return read_data[1]
 
     def closeserialport(self):
-        '''
+        """
         Closing the serial port.
         :return: True if it was open.
-        '''
+        """
         if self.port.is_open:
             log.debug('Closing the serial port.')
             self.port.close()
@@ -125,18 +137,18 @@ class MK312CommunicationWrapper(object):
             log.debug('Serial port was not open.')
 
     def writedata(self, address: int = 0x4080, data: int = 0x00):
-        '''
+        """
         Writing data to the given address.
         :param address: The address (int) from which we like to read.
         :param data: The data (int) for writing into the address.
-        :return: True if the data was send and confirmed by the MK-312.
-        '''
+        :return: True if the data was send and confirmed by the MK-312 / False if not
+        """
 
         log.debug('Writing data: 0x%0.2X to address: 0x%0.2X' % (data, address))
 
         # Check if the int value is between 0 and 255
         if data < 0x00 or data > 0xff:
-            raise MK312COMWriteDataValueException(message='Wrong data value: It should be between 0x00 and 0xff.')
+            raise MK312WriteDataValueException('Wrong data value: It should be between 0x00 and 0xff.')
 
         # Build the data
         send_data = [((0x3 + 1) << 0x4) | 0xd, address >> 8, address & 0xff, data]
@@ -159,92 +171,104 @@ class MK312CommunicationWrapper(object):
         log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
 
         # If the write operation was successful, we can read back 0x06 from the device
-        if read_data[0] is not 0x06:
+        if read_data[0] != 0x06:
             return False
             # TODO: Is this case worth of an exception?
         else:
             return True
 
     def resetkey(self):
-        '''
+        """
         Reset the key to 0x00.
-        '''
+        """
 
         log.debug('Resetting key to 0x00.')
-        self.writedata(0x4213, 0x00)
+        log.debug('Actual key in address 0x4213 is: 0x%0.2X' % self.readaddress(ADDRESS_KEY))
+        self.writedata(ADDRESS_KEY, 0x00)
+        self.key = None
 
     def handshake(self):
-        '''
+        """
         Do a handshake with the MK-312.
-        '''
+        :return: True if the handshake was successful.
+        """
 
         log.debug('Handshaking.')
 
         # Data for sending
         send_data = bytes([0])
 
-        # If we have a key then use it
-        if self.key is not None:
-            send_data = [x ^ self.key for x in send_data]
+        # We are trying to disturb the device as long as self.handshake_repeat is
+        handshake_repeat = 0
 
-        # Try to
-        for i in range(4):
-            log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
+        while True:
+            # If we have a key then use it
+            if self.key is not None:
+                send_data = [x ^ self.key for x in send_data]
+
+            # Sending 0x00 or the encrypted variant to the device
+            log.debug('Sending data: %s [Waiting for handshaking]' % bytes_to_hex_str(send_data))
             self.port.write(send_data)
 
+            # Reading what is going on
             read_data = self.port.read(1)
-            log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
+            log.debug('Reading data: %s [Waiting for handshaking]' % bytes_to_hex_str(read_data))
 
+            # If we can not read data back try to use the default key
             if len(read_data) == 0:
-                # Trying it again
-                continue
-            if read_data[0] != 0x7:
-                # Reading no handshake
-                raise MK312COMHandshakeException(message='Received handshake is not 0x07: 0x%0.2X' % read_data[0])
-                #self.handshake()
-            else:
+                self.key = 0x55
+
+            # Send as long as we have data and 0x07 -> the device is ready for handshake
+            if len(read_data) == 1 and read_data[0] == 0x07:
+                # Exiting the while loop
+                log.debug('Reading data: %s [Ready for handshaking]' % bytes_to_hex_str(read_data))
                 break
-        if len(read_data) == 0:
-            raise MK312COMHandshakeException(message='No data received.')
 
-        # If we already have a key
-        #if self.key is not None:
-        #    return
+            # We are trying as much as we like?
+            handshake_repeat += 1
+            if handshake_repeat >= self.handshake_repeat:
+                raise MK312HandshakeException('Repeating to much times! Restart the device?')
 
-        # Sending a key
+        # We can setup a new key -> Sending a key, actually the key is fixed to 0x00
         send_data = [0x2f, 0x00]
         checksum = sum(send_data) % 256
         send_data.append(checksum)
 
-        # Only encrypt if we have a key
+        # Only encrypt if we have a key (if not, we do not know if the device has one)
         if self.key:
             send_data = [x ^ self.key for x in send_data]
-        self.port.write(bytes(send_data))
         log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
+        self.port.write(bytes(send_data))
 
         read_data = self.port.read(3)
         log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
 
-        if len(read_data) is 0:
-            raise MK312COMHandshakeException(message='No data received after sending a key.')
+        if len(read_data) == 0:
+            # Maybe there was a key stored but we do not know it.
+            # Normally you have to switch off the device and restart it after a long time.
+            # If you do not have used a different key yet we can try to test our default key
+            self.key = 0x55
+            self.handshake()
+        else:
+            # Check the checksum from the device
+            checksum = read_data[-1]
+            s = sum(read_data[:-1]) % 256
+            if s != checksum:
+                # If the checksum is wrong, redo a handshake
+                # raise MK312ChecksumException('Checksum is wrong: 0x%0.2X != 0x%0.2X' % (s, checksum))
+                self.handshake()
+                return
 
-        # Test checksum
-        checksum = read_data[-1]
-        s = sum(read_data[:-1]) % 256
-        if s != checksum:
-            raise MK312COMHandshakeException(message='Checksum is wrong: 0x%0.2X != 0x%0.2X' % (s, checksum))
+            # Key generation: 0x55 ^ their_key
+            self.key = 0x55 ^ read_data[1]
+            log.debug('Handshake successful key is now: 0x%0.2X' % self.key)
 
-        if read_data[0] != 0x21:
-            raise MK312COMHandshakeException(message='Received hadnshake is not 0x21: 0x%0.2X' % read_data[0])
-
-        # Key generation: 0x55 ^ their_key
-        self.key = 0x55 ^ read_data[1]
-        log.debug('Handshake successful key is now: 0x%0.2X' % self.key)
+            return True
 
     def loadFavoriteMode(self):
-        '''
+        """
         Load the favorite module.
-        '''
+        """
 
         log.debug('Loading the favorite module.')
         # Check if we have a key
@@ -254,9 +278,9 @@ class MK312CommunicationWrapper(object):
         return self.writedata(address=ADDRESS_COMMAND_1, data=COMMAND_START_FAVORITE_MODULE)
 
     def loadMode(self, mode: int = MODE_WAVES):
-        '''
+        """
         Switch the actual mode.
-        '''
+        """
 
         log.debug('Loading mode: 0x%0.2X' % mode)
 
@@ -290,9 +314,9 @@ class MK312CommunicationWrapper(object):
             return False
 
     def setPowerLevel(self, powerlevel: int = POWERLEVEL_NORMAL):
-        '''
+        """
         Change the power level.
-        '''
+        """
 
         log.debug('Change power level: 0x%0.2X' % powerlevel)
 
@@ -314,9 +338,9 @@ class MK312CommunicationWrapper(object):
             return False
 
     def disableADC(self):
-        '''
+        """
         Disable ADC --> The potentiometers at the front are disabled so you can not control the device anymore!
-        '''
+        """
 
         log.debug('Disable the ADC!')
 
@@ -334,9 +358,9 @@ class MK312CommunicationWrapper(object):
             return False
 
     def enableADC(self):
-        '''
+        """
         Enable ADC --> You get control over the potentiometers.
-        '''
+        """
 
         log.debug('Enable the ADC!')
 
@@ -354,9 +378,9 @@ class MK312CommunicationWrapper(object):
             return False
 
     def setLevelA(self, level: int = 0x00):
-        '''
+        """
         Set the Level A if the ADC is disabled.
-        '''
+        """
 
         # TODO: Check if the ADC is disabled!
         log.debug('Set level A to: 0x%0.2X' % level)
@@ -378,9 +402,9 @@ class MK312CommunicationWrapper(object):
             return False
 
     def getLevelA(self):
-        '''
+        """
         Get Level A.
-        '''
+        """
 
         log.debug('Get Level A.')
 
@@ -389,9 +413,9 @@ class MK312CommunicationWrapper(object):
         return read_levela
 
     def setLevelB(self, level: int = 0x00):
-        '''
+        """
         Set the Level B if the ADC is disabled.
-        '''
+        """
 
         # TODO: Check if the ADC is disabled!
         log.debug('Set level B to: 0x%0.2X' % level)
@@ -413,9 +437,9 @@ class MK312CommunicationWrapper(object):
             return False
 
     def getLevelB(self):
-        '''
+        """
         Get Level B.
-        '''
+        """
 
         log.debug('Get Level B.')
 
@@ -424,9 +448,9 @@ class MK312CommunicationWrapper(object):
         return read_levelb
 
     def setLevelMA(self, level: int = 0x00):
-        '''
+        """
         Set the Level MA if the ADC is disabled.
-        '''
+        """
 
         # TODO: Check if the ADC is disabled!
         log.debug('Set level MA to: 0x%0.2X' % level)
@@ -451,10 +475,10 @@ class MK312CommunicationWrapper(object):
             return False
 
     def getMinMaxValueMA(self):
-        '''
+        """
         Get the possible minimal and maximal value of the multi adjust.
         Please note that the minimal level is not necessarily the minimal value and vice versa.
-        '''
+        """
 
         # TODO: Store the minimal and maximal levels in the object self.mamax and self.mamin
         #  fill the data if new mode is selected
@@ -468,9 +492,9 @@ class MK312CommunicationWrapper(object):
         return read_min_ma, read_max_ma
 
     def getLevelMA(self):
-        '''
+        """
         Get the multi adjust level.
-        '''
+        """
 
         log.debug('Get multi adjust level.')
 

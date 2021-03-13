@@ -3,3 +3,4 @@ mk312com.code-workspace
 dist/
 build/
 mk312.egg-info
+mk312/__pycache__/

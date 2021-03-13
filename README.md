@@ -3,7 +3,7 @@
 ## Introduction
 
 This is an communication wrapper for the MK-312BT Estim Box. It uses `pyserial` for the RS232 communication. Primary I wrote it for my own purposes. It should be the base for a remote controlling tool and an abstraction layer for a Rest API too.
-If you like to do a test, it would be great :) I love to hear from you if there are some problems.
+If you like to do a test, it would be great :) I love to get a feedback from you.
 
 ## Firmware
 
@@ -12,7 +12,7 @@ Please note that I have some trouble with the fuse bits. Therefore I was using: 
 
 ## Connection
 
-The communication with the MK-312 device is working via an RS232 interface. I'm not glad about the phone jack because you can shorten the connectors while plugging in the interface cable. So I suggest to do the connection if the device is switched off. Maybe someone will giving the board an sub-d connector in further hardware versions. Or even better a real ethernet connection with a socket communication :) 
+The communication with the MK-312 device is working via an RS232 interface -> **LINK** connector. I'm not glad about the phone jack because you can shorten the connectors while plugging in the interface cable. So I suggest to do the connection if the device is switched off. Maybe someone will giving the board an sub-d connector in further hardware versions. Or even better a real ethernet connection with a socket communication :) 
 
 | Phone Jack | RS232 | Sub-D |
 |------------|-------|-------|
@@ -33,7 +33,7 @@ Please check the examples dir. I wrote some basic tests which should work.
 
 ## Handshaking
 
-I got some troubles with the handshaking which are actually not solved. So please do the communication in the way:
+I completly rewrote the handshaking part. You can do it in a way I already showed in the examples:
 
 ```python
 et312 = mk312.MK312CommunicationWrapper()
@@ -48,7 +48,7 @@ et312.resetkey()
 et312.closeserialport()
 ```
 
-If there is an interrupt of the script before you reset the key, you will getting problems with a reconnect. Maybe someone was fixing this issue or can help me with this matter.
+If there is an interrupt of the script before you reset the key, you will getting problems with a reconnect. Actually it should be no problem at all to reconnect.
 
 When nothing helps you can switch off the box and switch it on again. Because of the high amount of capacitors the RAM of the AVR is bufferd very long - so it take some time to wait until a reconnection is possible. I have no battery on my MK-312 therefore I can only plug off the power supply. A better way will be unloading the capacitors if switching the box off...this remains in an hardware redesign too.
 

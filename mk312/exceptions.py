@@ -1,46 +1,29 @@
 # -*- coding: utf-8 -*-
 
-
-class MK312COMInterfaceException(Exception):
-    '''
-    Exception at opening the interface.
-    '''
-
-    def __init__(self, message):
-        self.message = message
-
-
-class MK312COMReceivingLengthException(Exception):
-    '''
+class MK312ReceivingLengthException(Exception):
+    """
     Length exception during answering (the bytes that we received are not the length that we expect).
-    '''
-
-    def __init__(self, message):
-        self.message = message
+    """
+    pass
 
 
-class MK312COMChecksumException(Exception):
-    '''
+class MK312ChecksumException(Exception):
+    """
     The checksum of the received data is not correct.
-    '''
-
-    def __init__(self, message):
-        self.message = message
+    """
+    pass
 
 
-class MK312COMWriteDataValueException(Exception):
-    '''
+class MK312WriteDataValueException(Exception):
+    """
     The value of the data which should be write is wrong.
-    '''
-
-    def __init__(self, message):
-        self.message = message
+    """
+    pass
 
 
-class MK312COMHandshakeException(Exception):
-    '''
+class MK312HandshakeException(Exception):
+    """
     There is an exception during handshaking.
-    '''
+    """
 
-    def __init__(self, message):
-        self.message = message
+    pass
