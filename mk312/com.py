@@ -7,7 +7,9 @@ from .exceptions import MK312ReceivingLengthException, MK312ChecksumException, M
     MK312HandshakeException
 from .constants import ADDRESS_COMMAND_1, ADDRESS_CURRENT_MODE, ADDRESS_POWER_LEVEL, ADDRESS_R15, ADDRESS_LEVELA, \
     ADDRESS_LEVELB, ADDRESS_MA_MAX_VALUE, ADDRESS_MA_MIN_VALUE, ADDRESS_LEVELMA, ADDRESS_KEY
-from .constants import COMMAND_START_FAVORITE_MODULE, COMMAND_EXIT_MENU, COMMAND_NEW_MODE
+from .constants import EEPROM_ADDRESS_POWER_LEVEL, EEPROM_ADDRESS_FAVORITE_MODE
+from .constants import COMMAND_START_FAVORITE_MODULE, COMMAND_SHOW_STATUS_SCREEN, COMMAND_SELECT_MENU_ITEM, \
+    COMMAND_EXIT_MENU, COMMAND_NEW_MODE
 from .constants import MODE_WAVES
 from .constants import POWERLEVEL_NORMAL
 from .constants import REGISTER_15_ADCDISABLE
@@ -19,6 +21,10 @@ log = logging.getLogger(__name__)
 
 
 class MK312CommunicationWrapper(object):
+    """
+    The Communication Wrapper for using a MK-312 box.
+    """
+
     def __init__(self,
                  device: str = '/dev/cu.usbserial',
                  baudrate: int = 19200,
@@ -44,9 +50,9 @@ class MK312CommunicationWrapper(object):
         if self.key is not None:
             log.debug('Key: 0x%0.2X' % self.key)
         self.handshake_repeat = handshake_repeat
-        self._openserialport()
+        self.__openserialport()
 
-    def _openserialport(self):
+    def __openserialport(self):
         """
         We are trying to open the interface.
         :return: True if open, else it throws an exception.
@@ -75,117 +81,23 @@ class MK312CommunicationWrapper(object):
         except Exception as e:
             raise e
 
-    def readaddress(self, address: int = 0x00fd):
+    def close(self):
         """
-        Read data from the MK-312 of the given address.
-        :param address: The address (int) from which we like to read.
-        :return: The content of the address as int value / flase if reading failed.
-        """
-
-        log.debug('Reading address: 0x%0.2X' % address)
-
-        # Create the address data for sending to the MK312
-        send_data = [0x3c, address >> 8, address & 0xff]
-
-        # Creating a checksum
-        checksum = sum(send_data) % 256
-
-        # Append the checksum to data
-        log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
-        send_data.append(checksum)
-
-        # Encrypt if the key is not None
-        if self.key:
-            send_data = [x ^ self.key for x in send_data]
-            log.debug('Sending encrypted data: %s' % bytes_to_hex_str(send_data))
-
-        # Send the data
-        self.port.write(bytes(send_data))
-
-        # Get the data from the reading command (3 bytes)
-        read_data = self.port.read(3)
-        log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
-
-        # We have no data read -> maybe the key is wrong?
-        if len(read_data) == 0:
-            return False
-
-        if len(read_data) != 3:
-            raise MK312ReceivingLengthException('Reading failed getting %i bytes.' % len(read_data))
-
-        # Get the checksum from the received data
-        checksum = read_data[-1]
-        log.debug('Checksum of read data: 0x%0.2X' % checksum)
-        s = sum(read_data[:-1]) % 256
-        if s != checksum:
-            raise MK312ChecksumException('Checksum of read data is incorrect: 0x%0.2X != 0x%0.2X' % (checksum, s))
-
-        # Return the data
-        log.debug('Address: 0x%0.2X content: 0x%0.2X' % (address, read_data[1]))
-        return read_data[1]
-
-    def closeserialport(self):
-        """
-        Closing the serial port.
+        Closing the serial port and reset the key.
         :return: True if it was open.
         """
+
+        log.debug('Closing the communication.')
+
+        # Reset the key
+        self.__resetkey()
+
         if self.port.is_open:
             log.debug('Closing the serial port.')
             self.port.close()
             return True
         else:
             log.debug('Serial port was not open.')
-
-    def writedata(self, address: int = 0x4080, data: int = 0x00):
-        """
-        Writing data to the given address.
-        :param address: The address (int) from which we like to read.
-        :param data: The data (int) for writing into the address.
-        :return: True if the data was send and confirmed by the MK-312 / False if not
-        """
-
-        log.debug('Writing data: 0x%0.2X to address: 0x%0.2X' % (data, address))
-
-        # Check if the int value is between 0 and 255
-        if data < 0x00 or data > 0xff:
-            raise MK312WriteDataValueException('Wrong data value: It should be between 0x00 and 0xff.')
-
-        # Build the data
-        send_data = [((0x3 + 1) << 0x4) | 0xd, address >> 8, address & 0xff, data]
-
-        # Create the checksum and append it
-        checksum = sum(send_data) % 256
-        send_data.append(checksum)
-        log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
-
-        # Only encrypt if we have a key
-        if self.key:
-            send_data = [x ^ self.key for x in send_data]
-            log.debug('Sending encrypted data: %s' % bytes_to_hex_str(send_data))
-
-        # Send the data
-        self.port.write(bytes(send_data))
-
-        # Read the response
-        read_data = self.port.read(1)
-        log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
-
-        # If the write operation was successful, we can read back 0x06 from the device
-        if read_data[0] != 0x06:
-            return False
-            # TODO: Is this case worth of an exception?
-        else:
-            return True
-
-    def resetkey(self):
-        """
-        Reset the key to 0x00.
-        """
-
-        log.debug('Resetting key to 0x00.')
-        log.debug('Actual key in address 0x4213 is: 0x%0.2X' % self.readaddress(ADDRESS_KEY))
-        self.writedata(ADDRESS_KEY, 0x00)
-        self.key = None
 
     def handshake(self):
         """
@@ -265,31 +177,168 @@ class MK312CommunicationWrapper(object):
 
             return True
 
-    def loadFavoriteMode(self):
+    def __resetkey(self):
         """
-        Load the favorite module.
+        Reset the key to 0x00.
         """
 
-        log.debug('Loading the favorite module.')
+        log.debug('Resetting key to 0x00.')
+        log.debug('Actual key in address 0x4213 is: 0x%0.2X' % self.readaddress(ADDRESS_KEY))
+        self.writedata(ADDRESS_KEY, 0x00)
+        self.key = None
+
+    def readaddress(self, address: int = 0x00fd):
+        """
+        Read data from the MK-312 of the given address.
+        :param address: The address (int) from which we like to read.
+        :return: The content of the address as int value / flase if reading failed.
+        """
+
+        log.debug('Reading address: 0x%0.2X' % address)
+
+        # Create the address data for sending to the MK312
+        send_data = [0x3c, address >> 8, address & 0xff]
+
+        # Creating a checksum
+        checksum = sum(send_data) % 256
+
+        # Append the checksum to data
+        log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
+        send_data.append(checksum)
+
+        # Encrypt if the key is not None
+        if self.key:
+            send_data = [x ^ self.key for x in send_data]
+            log.debug('Sending encrypted data: %s' % bytes_to_hex_str(send_data))
+
+        # Send the data
+        self.port.write(bytes(send_data))
+
+        # Get the data from the reading command (3 bytes)
+        read_data = self.port.read(3)
+        log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
+
+        # We have no data read -> maybe the key is wrong?
+        if len(read_data) == 0:
+            return False
+
+        if len(read_data) != 3:
+            raise MK312ReceivingLengthException('Reading failed getting %i bytes.' % len(read_data))
+
+        # Get the checksum from the received data
+        checksum = read_data[-1]
+        log.debug('Checksum of read data: 0x%0.2X' % checksum)
+        s = sum(read_data[:-1]) % 256
+        if s != checksum:
+            raise MK312ChecksumException('Checksum of read data is incorrect: 0x%0.2X != 0x%0.2X' % (checksum, s))
+
+        # Return the data
+        log.debug('Address: 0x%0.2X content: 0x%0.2X' % (address, read_data[1]))
+        return read_data[1]
+
+    def writedata(self, address: int = 0x4080, data: int = 0x00):
+        """
+        Writing data to the given address.
+        :param address: The address (int) from which we like to read.
+        :param data: The data (int) for writing into the address.
+        :return: True if the data was send and confirmed by the MK-312 / False if not
+        """
+
+        log.debug('Writing data: 0x%0.2X to address: 0x%0.2X' % (data, address))
+
+        # Check if the int value is between 0 and 255
+        if data < 0x00 or data > 0xff:
+            raise MK312WriteDataValueException('Wrong data value: It should be between 0x00 and 0xff.')
+
+        # Build the data
+        send_data = [((0x3 + 1) << 0x4) | 0xd, address >> 8, address & 0xff, data]
+
+        # Create the checksum and append it
+        checksum = sum(send_data) % 256
+        send_data.append(checksum)
+        log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
+
+        # Only encrypt if we have a key
+        if self.key:
+            send_data = [x ^ self.key for x in send_data]
+            log.debug('Sending encrypted data: %s' % bytes_to_hex_str(send_data))
+
+        # Send the data
+        self.port.write(bytes(send_data))
+
+        # Read the response
+        read_data = self.port.read(1)
+        log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
+
+        # If the write operation was successful, we can read back 0x06 from the device
+        if read_data[0] != 0x06:
+            return False
+            # TODO: Is this case worth of an exception?
+        else:
+            return True
+
+    def favoriteModeLoad(self):
+        """
+        Load the favorite mode.
+        :return: True if the mode was loaded.
+        """
+
+        log.debug('Loading the favorite mode.')
+
         # Check if we have a key
         if self.key is None:
             self.handshake()
 
         return self.writedata(address=ADDRESS_COMMAND_1, data=COMMAND_START_FAVORITE_MODULE)
 
-    def loadMode(self, mode: int = MODE_WAVES):
+    def favoriteModeRead(self):
         """
-        Switch the actual mode.
+        Read the favorite mode from the EEPROM
+        :return: The mode which is actually store in the EEPROM.
         """
 
-        log.debug('Loading mode: 0x%0.2X' % mode)
+        log.debug('Reading the favorite mode from the eeprom.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.readaddress(address=EEPROM_ADDRESS_FAVORITE_MODE)
+
+    def favoriteModeWrite(self, mode: int = MODE_WAVES):
+        """
+        Write the favorite mode into EEPROM. Please note you have to restart to use this mode as favorite.
+        :param mode: The mode for writing.
+        :return: True if the mode is written into the EEPROM.
+        """
+
+        log.debug('Writing the favorite mode into the eeprom -> 0x%0.2X' % mode)
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        # If the mode is actual the favorite one
+        if mode == self.readaddress(address=EEPROM_ADDRESS_FAVORITE_MODE):
+            return True
+
+        return self.writedata(address=EEPROM_ADDRESS_FAVORITE_MODE, data=mode)
+
+    def modeSwitch(self, mode: int = MODE_WAVES):
+        """
+        Switch the actual mode.
+        :param mode: The mode for loading.
+        :return: True or False if the mode is switched.
+        """
+
+        log.debug('Switching to mode: 0x%0.2X' % mode)
 
         # Check if we have a key
         if self.key is None:
             self.handshake()
 
         # Bail early on loadMode if mode is already selected
-        if mode is self.readaddress(address=ADDRESS_CURRENT_MODE):
+        if mode == self.readaddress(address=ADDRESS_CURRENT_MODE):
             return True
         
         # Switch the mode
@@ -311,18 +360,20 @@ class MK312CommunicationWrapper(object):
         sleep(0.1)
 
         # Read back the mode for proving it
-        if mode is self.readaddress(address=ADDRESS_CURRENT_MODE):
+        if mode == self.readaddress(address=ADDRESS_CURRENT_MODE):
             return True
         else:
             log.debug('New mode is not switched!')
             return False
 
-    def setPowerLevel(self, powerlevel: int = POWERLEVEL_NORMAL):
+    def powerLevelSet(self, powerlevel: int = POWERLEVEL_NORMAL):
         """
         Change the power level.
+        :param powerlevel: The power level to set.
+        :return: True or False if the power level is set.
         """
 
-        log.debug('Change power level: 0x%0.2X' % powerlevel)
+        log.debug('Set the power level: 0x%0.2X' % powerlevel)
 
         # Check if we have a key
         if self.key is None:
@@ -341,7 +392,40 @@ class MK312CommunicationWrapper(object):
             log.debug('New power level is not active!')
             return False
 
-    def disableADC(self):
+    def powerLevelRead(self):
+        """
+        Read the power level from the EEPROM
+        :return: The power level which is actually store in the EEPROM.
+        """
+
+        log.debug('Reading the power level from the eeprom.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.readaddress(address=EEPROM_ADDRESS_POWER_LEVEL)
+
+    def powerLevelWrite(self, powerlevel: int = POWERLEVEL_NORMAL):
+        """
+        Write the power level into EEPROM. Please note you have to restart to use this power level as startup.
+        :param powerlevel: The power level for writing.
+        :return: True if the power level is written into the EEPROM.
+        """
+
+        log.debug('Writing the power level into the eeprom -> 0x%0.2X' % powerlevel)
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        # If the mode is actual the favorite one
+        if powerlevel == self.readaddress(address=EEPROM_ADDRESS_POWER_LEVEL):
+            return True
+
+        return self.writedata(address=EEPROM_ADDRESS_POWER_LEVEL, data=powerlevel)
+
+    def adcDisable(self):
         """
         Disable ADC --> The potentiometers at the front are disabled so you can not control the device anymore!
         """
@@ -361,7 +445,7 @@ class MK312CommunicationWrapper(object):
         else:
             return False
 
-    def enableADC(self):
+    def adcEnable(self):
         """
         Enable ADC --> You get control over the potentiometers.
         """
@@ -381,9 +465,11 @@ class MK312CommunicationWrapper(object):
         else:
             return False
 
-    def setLevelA(self, level: int = 0x00):
+    def levelASet(self, level: int = 0x00):
         """
         Set the Level A if the ADC is disabled.
+        :param level: The Level of A 0-255
+        :return: True if the level was set.
         """
 
         # TODO: Check if the ADC is disabled!
@@ -393,6 +479,10 @@ class MK312CommunicationWrapper(object):
         if level < 0x00 or level > 0xff:
             log.debug('Level needs to be between 0x00 and 0xff! -> Can not set Level A to: 0x%0.2X' % level)
             return False
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
 
         # Write it
         if self.writedata(address=ADDRESS_LEVELA, data=level):
@@ -405,20 +495,27 @@ class MK312CommunicationWrapper(object):
         else:
             return False
 
-    def getLevelA(self):
+    def levelAGet(self):
         """
         Get Level A.
+        :return: The Level of A.
         """
 
         log.debug('Get Level A.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
 
         read_levela = self.readaddress(address=ADDRESS_LEVELA)
         log.debug('Level A is set to: 0x%0.2X' % read_levela)
         return read_levela
 
-    def setLevelB(self, level: int = 0x00):
+    def levelBSet(self, level: int = 0x00):
         """
         Set the Level B if the ADC is disabled.
+        :param level: The Level of B 0-255
+        :return: True if the level was set.
         """
 
         # TODO: Check if the ADC is disabled!
@@ -428,6 +525,10 @@ class MK312CommunicationWrapper(object):
         if level < 0x00 or level > 0xff:
             log.debug('Level needs to be between 0x00 and 0xff! -> Can not set Level B to: 0x%0.2X' % level)
             return False
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
 
         # Write it
         if self.writedata(address=ADDRESS_LEVELB, data=level):
@@ -440,27 +541,38 @@ class MK312CommunicationWrapper(object):
         else:
             return False
 
-    def getLevelB(self):
+    def levelBGet(self):
         """
         Get Level B.
+        :return: The Level of B.
         """
 
         log.debug('Get Level B.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
 
         read_levelb = self.readaddress(address=ADDRESS_LEVELB)
         log.debug('Level B is set to: 0x%0.2X' % read_levelb)
         return read_levelb
 
-    def setLevelMA(self, level: int = 0x00):
+    def levelMASet(self, level: int = 0x00):
         """
         Set the Level MA if the ADC is disabled.
+        :param level: The Level of MA 0-255
+        :return: True if the level was set.
         """
 
         # TODO: Check if the ADC is disabled!
         log.debug('Set level MA to: 0x%0.2X' % level)
 
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
         # Check if the int value is between min MA and max ma
-        read_min_ma, read_max_ma = self.getMinMaxValueMA()
+        read_min_ma, read_max_ma = self.levelMAGetMinMaxValue()
 
         if level < read_min_ma or level > read_max_ma:
             log.debug('MA Level needs to be between 0x%0.2X and 0x%0.2X! -> Can not set MA Level to: 0x%0.2X' %
@@ -478,15 +590,20 @@ class MK312CommunicationWrapper(object):
         else:
             return False
 
-    def getMinMaxValueMA(self):
+    def levelMAGetMinMaxValue(self):
         """
         Get the possible minimal and maximal value of the multi adjust.
         Please note that the minimal level is not necessarily the minimal value and vice versa.
+        :return: Min Level, Max Level
         """
 
         # TODO: Store the minimal and maximal levels in the object self.mamax and self.mamin
         #  fill the data if new mode is selected
         log.debug('Get the minimal and maximal multi adjust values.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
 
         read_min_ma = self.readaddress(address=ADDRESS_MA_MIN_VALUE)
         log.debug('MA minimal value is: 0x%0.2X' % read_min_ma)
@@ -495,12 +612,17 @@ class MK312CommunicationWrapper(object):
 
         return read_min_ma, read_max_ma
 
-    def getLevelMA(self):
+    def levelMAGet(self):
         """
         Get the multi adjust level.
+        :return: The Level of MA.
         """
 
         log.debug('Get multi adjust level.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
 
         read_levelma = self.readaddress(address=ADDRESS_LEVELMA)
         log.debug('Level MA is set to: 0x%0.2X' % read_levelma)

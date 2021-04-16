@@ -13,22 +13,21 @@ def main():
 
     try:
         # Create the communication wrapper
-        my312 = mk312.MK312CommunicationWrapper(device='/dev/cu.usbserial-ftE23GYE')
+        my312 = mk312.MK312CommunicationWrapper(device='/dev/ttyUSB0')
 
         # Do an handshake
         my312.handshake()
 
         # Switch the modes
         for mode in range(MODE_WAVES, MODE_USER7, 1):
-            my312.loadMode(mode=mode)
+            my312.modeSwitch(mode=mode)
             sleep(4.0)
 
     except Exception as e:
         logging.error('Exception: %s.' % e)
     finally:
-        # Reset the key
-        my312.resetkey()
-        my312.closeserialport()
+        # Close the connection
+        my312.close()
 
 
 if __name__ == "__main__":

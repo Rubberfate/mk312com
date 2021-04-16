@@ -44,8 +44,7 @@ et312.handshake()
 # ...
 
 # Reset key and close the interface
-et312.resetkey()
-et312.closeserialport()
+et312.close()
 ```
 
 If there is an interrupt of the script before you reset the key, you will getting problems with a reconnect. Actually it should be no problem at all to reconnect.

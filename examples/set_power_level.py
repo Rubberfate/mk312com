@@ -13,28 +13,27 @@ def main():
 
     try:
         # Create the communication wrapper
-        my312 = mk312.MK312CommunicationWrapper(device='/dev/cu.usbserial-ftE23GYE')
+        my312 = mk312.MK312CommunicationWrapper(device='/dev/ttyUSB0')
 
         # Do an handshake
         my312.handshake()
 
         # Set the power level to low
-        my312.setPowerLevel(powerlevel=POWERLEVEL_LOW)
+        my312.powerLevelSet(powerlevel=POWERLEVEL_LOW)
         sleep(2.0)
 
         # Set the power level to normal
-        my312.setPowerLevel(powerlevel=POWERLEVEL_NORMAL)
+        my312.powerLevelSet(powerlevel=POWERLEVEL_NORMAL)
         sleep(2.0)
 
         # Set the power level to high
-        my312.setPowerLevel(powerlevel=POWERLEVEL_HIGH)
+        my312.powerLevelSet(powerlevel=POWERLEVEL_HIGH)
         sleep(2.0)
     except Exception as e:
         logging.error('Exception: %s.' % e)
     finally:
-        # Reset the key
-        my312.resetkey()
-        my312.closeserialport()
+        # Close the connection
+        my312.close()
 
 
 if __name__ == "__main__":
