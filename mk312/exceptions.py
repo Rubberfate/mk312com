@@ -25,5 +25,4 @@ class MK312HandshakeException(Exception):
     """
     There is an exception during handshaking.
     """
-
     pass

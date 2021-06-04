@@ -5,14 +5,15 @@ from time import sleep
 import logging
 from .exceptions import MK312ReceivingLengthException, MK312ChecksumException, MK312WriteDataValueException, \
     MK312HandshakeException
-from .constants import ADDRESS_COMMAND_1, ADDRESS_CURRENT_MODE, ADDRESS_POWER_LEVEL, ADDRESS_R15, ADDRESS_LEVELA, \
-    ADDRESS_LEVELB, ADDRESS_MA_MAX_VALUE, ADDRESS_MA_MIN_VALUE, ADDRESS_LEVELMA, ADDRESS_KEY
+from .constants import ADDRESS_COMMAND_1, ADDRESS_CURRENT_MODE, ADDRESS_POWER_LEVEL, ADDRESS_R15, \
+    ADDRESS_LEVELA, ADDRESS_LEVELB, ADDRESS_MA_MAX_VALUE, ADDRESS_MA_MIN_VALUE, ADDRESS_LEVELMA, ADDRESS_KEY, \
+    ADDRESS_PUSH_BUTTON, ADDRESS_BATTERY_LEVEL
 from .constants import EEPROM_ADDRESS_POWER_LEVEL, EEPROM_ADDRESS_FAVORITE_MODE
-from .constants import COMMAND_START_FAVORITE_MODULE, COMMAND_SHOW_STATUS_SCREEN, COMMAND_SELECT_MENU_ITEM, \
-    COMMAND_EXIT_MENU, COMMAND_NEW_MODE
+from .constants import COMMAND_START_FAVORITE_MODULE, COMMAND_EXIT_MENU, COMMAND_NEW_MODE, COMMAND_SHOW_MAIN_MENU
 from .constants import MODE_WAVES
 from .constants import POWERLEVEL_NORMAL
 from .constants import REGISTER_15_ADCDISABLE
+from .constants import BUTTON_MENU
 from .utils import bytes_to_hex_str
 
 
@@ -28,7 +29,7 @@ class MK312CommunicationWrapper(object):
     def __init__(self,
                  device: str = '/dev/cu.usbserial',
                  baudrate: int = 19200,
-                 timeout: float = 0.5,
+                 timeout: float = 0.3,
                  key: int = None,
                  handshake_repeat: int = 10):
         """
@@ -89,8 +90,9 @@ class MK312CommunicationWrapper(object):
 
         log.debug('Closing the communication.')
 
-        # Reset the key
-        self.__resetkey()
+        if self.key:
+            # Reset the key
+            self.__resetkey()
 
         if self.port.is_open:
             log.debug('Closing the serial port.')
@@ -122,7 +124,7 @@ class MK312CommunicationWrapper(object):
             log.debug('Sending data: %s [Waiting for handshaking]' % bytes_to_hex_str(send_data))
             self.port.write(send_data)
 
-            # Reading what is going on
+            # Reading the first byte
             read_data = self.port.read(1)
             log.debug('Reading data: %s [Waiting for handshaking]' % bytes_to_hex_str(read_data))
 
@@ -140,6 +142,9 @@ class MK312CommunicationWrapper(object):
             handshake_repeat += 1
             if handshake_repeat >= self.handshake_repeat:
                 raise MK312HandshakeException('Repeating to much times! Restart the device?')
+
+            # Handshake Loop
+            log.debug('Handshake Loop: %i' % handshake_repeat)
 
         # We can setup a new key -> Sending a key, actually the key is fixed to 0x00
         send_data = [0x2f, 0x00]
@@ -160,16 +165,14 @@ class MK312CommunicationWrapper(object):
             # Normally you have to switch off the device and restart it after a long time.
             # If you do not have used a different key yet we can try to test our default key
             self.key = 0x55
-            self.handshake()
+            #self.handshake()
         else:
             # Check the checksum from the device
             checksum = read_data[-1]
             s = sum(read_data[:-1]) % 256
             if s != checksum:
                 # If the checksum is wrong, redo a handshake
-                # raise MK312ChecksumException('Checksum is wrong: 0x%0.2X != 0x%0.2X' % (s, checksum))
-                self.handshake()
-                return
+                raise MK312ChecksumException('Checksum is wrong: 0x%0.2X != 0x%0.2X' % (s, checksum))
 
             # Key generation: 0x55 ^ their_key
             self.key = 0x55 ^ read_data[1]
@@ -627,3 +630,77 @@ class MK312CommunicationWrapper(object):
         read_levelma = self.readaddress(address=ADDRESS_LEVELMA)
         log.debug('Level MA is set to: 0x%0.2X' % read_levelma)
         return read_levelma
+
+    def guiPowerState(self):
+        """
+        Get the power status bits.
+        :return: The power status bits ->
+                    Bit 0 -> Battery
+                    Bit 1 -> Power Supply
+        """
+
+        log.debug('Get the power state.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.readaddress(address=0x4215)
+
+    def guiBatteryLevel(self):
+        """
+        Get the battery level in percent.
+        :return: The battery level 0%-99% <=> 0-255. -> level / 2,55 = percentage
+        """
+
+        log.debug('Get the battery level.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.readaddress(address=ADDRESS_BATTERY_LEVEL)
+
+    def guiBatteryVoltage(self):
+        """
+        Get the voltage of the battery.
+        4063
+        :return:
+        """
+
+        log.debug('Get the battery voltage.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.readaddress(address=0x4063)
+
+    def guiPushButton(self, button: int = BUTTON_MENU):
+        """
+        Push the button.
+        :param button: The button which should be pushed.
+        :return: True if the button pushed.
+        """
+
+        log.debug('Push the button: %i' % button)
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.writedata(address=ADDRESS_PUSH_BUTTON, data=button)
+
+    def guiMainMenu(self):
+        """
+        Jump to the main menu.
+        :return: True if the menu is set.
+        """
+
+        log.debug('Jump to main menu.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.writedata(address=ADDRESS_COMMAND_1, data=COMMAND_SHOW_MAIN_MENU)
