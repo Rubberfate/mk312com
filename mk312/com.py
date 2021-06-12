@@ -7,7 +7,7 @@ from .exceptions import MK312ReceivingLengthException, MK312ChecksumException, M
     MK312HandshakeException
 from .constants import ADDRESS_COMMAND_1, ADDRESS_CURRENT_MODE, ADDRESS_POWER_LEVEL, ADDRESS_R15, \
     ADDRESS_LEVELA, ADDRESS_LEVELB, ADDRESS_MA_MAX_VALUE, ADDRESS_MA_MIN_VALUE, ADDRESS_LEVELMA, ADDRESS_KEY, \
-    ADDRESS_PUSH_BUTTON, ADDRESS_BATTERY_LEVEL
+    ADDRESS_PUSH_BUTTON, ADDRESS_BATTERY_LEVEL, ADDRESS_ADC_BATTERY, ADDRESS_ADC_POWER
 from .constants import EEPROM_ADDRESS_POWER_LEVEL, EEPROM_ADDRESS_FAVORITE_MODE
 from .constants import COMMAND_START_FAVORITE_MODULE, COMMAND_EXIT_MENU, COMMAND_NEW_MODE, COMMAND_SHOW_MAIN_MENU
 from .constants import MODE_WAVES
@@ -274,6 +274,7 @@ class MK312CommunicationWrapper(object):
         log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
 
         # If the write operation was successful, we can read back 0x06 from the device
+        # TODO: If there are no data? I need to read the length!
         if read_data[0] != 0x06:
             return False
             # TODO: Is this case worth of an exception?
@@ -407,7 +408,7 @@ class MK312CommunicationWrapper(object):
         if self.key is None:
             self.handshake()
 
-        return self.readaddress(address=EEPROM_ADDRESS_POWER_LEVEL)
+        return self.readaddress(address=ADDRESS_POWER_LEVEL)
 
     def powerLevelWrite(self, powerlevel: int = POWERLEVEL_NORMAL):
         """
@@ -664,7 +665,6 @@ class MK312CommunicationWrapper(object):
     def guiBatteryVoltage(self):
         """
         Get the voltage of the battery.
-        4063
         :return:
         """
 
@@ -674,7 +674,21 @@ class MK312CommunicationWrapper(object):
         if self.key is None:
             self.handshake()
 
-        return self.readaddress(address=0x4063)
+        return self.readaddress(address=ADDRESS_ADC_BATTERY)
+
+    def guiPowerVoltage(self):
+        """
+        Get the voltage of the battery.
+        :return:
+        """
+
+        log.debug('Get the battery voltage.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        return self.readaddress(address=ADDRESS_ADC_POWER)
 
     def guiPushButton(self, button: int = BUTTON_MENU):
         """
