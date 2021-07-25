@@ -31,7 +31,7 @@ class MK312CommunicationWrapper(object):
                  baudrate: int = 19200,
                  timeout: float = 0.3,
                  key: int = None,
-                 handshake_repeat: int = 10):
+                 handshake_repeat: int = 12):
         """
         Init the communication wrapper with some settings for the serial port which the MK312 is connected to.
         :param device: RS232-USB converter or directly accessible RS232 interface.
@@ -104,7 +104,7 @@ class MK312CommunicationWrapper(object):
     def handshake(self):
         """
         Do a handshake with the MK-312.
-        :return: True if the handshake was successful.
+        :return: True if the handshake was successful / False if not.
         """
 
         log.debug('Handshaking.')
@@ -115,11 +115,8 @@ class MK312CommunicationWrapper(object):
         # We are trying to disturb the device as long as self.handshake_repeat is
         handshake_repeat = 0
 
+        # Send 0x00 as long as it needs to get 0x07 back from the device or self.handshake_repeat times
         while True:
-            # If we have a key then use it
-            if self.key is not None:
-                send_data = [x ^ self.key for x in send_data]
-
             # Sending 0x00 or the encrypted variant to the device
             log.debug('Sending data: %s [Waiting for handshaking]' % bytes_to_hex_str(send_data))
             self.port.write(send_data)
@@ -130,55 +127,49 @@ class MK312CommunicationWrapper(object):
 
             # If we can not read data back try to use the default key
             if len(read_data) == 0:
-                self.key = 0x55
-
-            # Send as long as we have data and 0x07 -> the device is ready for handshake
-            if len(read_data) == 1 and read_data[0] == 0x07:
+                handshake_repeat += 1
+                # Stop trying to handshaking after self.handshake_repeat times
+                if handshake_repeat >= self.handshake_repeat:
+                    raise MK312HandshakeException('Repeating to much times!')
+            elif read_data[0] == 0x07:
                 # Exiting the while loop
-                log.debug('Reading data: %s [Ready for handshaking]' % bytes_to_hex_str(read_data))
+                log.debug('Ready for handshaking.')
                 break
-
-            # We are trying as much as we like?
-            handshake_repeat += 1
-            if handshake_repeat >= self.handshake_repeat:
-                raise MK312HandshakeException('Repeating to much times! Restart the device?')
-
-            # Handshake Loop
-            log.debug('Handshake Loop: %i' % handshake_repeat)
 
         # We can setup a new key -> Sending a key, actually the key is fixed to 0x00
         send_data = [0x2f, 0x00]
         checksum = sum(send_data) % 256
         send_data.append(checksum)
 
-        # Only encrypt if we have a key (if not, we do not know if the device has one)
-        if self.key:
+        # If we have a key then use it
+        if self.key is not None:
             send_data = [x ^ self.key for x in send_data]
-        log.debug('Sending data: %s' % bytes_to_hex_str(send_data))
+
+        log.debug('Sending 0x00 as new key: %s' % bytes_to_hex_str(send_data))
         self.port.write(bytes(send_data))
 
         read_data = self.port.read(3)
-        log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
 
         if len(read_data) == 0:
-            # Maybe there was a key stored but we do not know it.
-            # Normally you have to switch off the device and restart it after a long time.
-            # If you do not have used a different key yet we can try to test our default key
+            log.debug('Reading data is empty! Setting key to 0x55.')
             self.key = 0x55
-            #self.handshake()
+            # Try it again with 0x55 as key...
+            return False
         else:
-            # Check the checksum from the device
-            checksum = read_data[-1]
-            s = sum(read_data[:-1]) % 256
-            if s != checksum:
-                # If the checksum is wrong, redo a handshake
-                raise MK312ChecksumException('Checksum is wrong: 0x%0.2X != 0x%0.2X' % (s, checksum))
+            log.debug('Reading data: %s' % bytes_to_hex_str(read_data))
 
-            # Key generation: 0x55 ^ their_key
-            self.key = 0x55 ^ read_data[1]
-            log.debug('Handshake successful key is now: 0x%0.2X' % self.key)
+        # Check the checksum from the device
+        checksum = read_data[-1]
+        s = sum(read_data[:-1]) % 256
+        if s != checksum:
+            # If the checksum is wrong, redo a handshake
+            raise MK312ChecksumException('Checksum is wrong: 0x%0.2X != 0x%0.2X' % (s, checksum))
 
-            return True
+        # Key generation: 0x55 ^ their_key
+        self.key = 0x55 ^ read_data[1]
+        log.debug('Handshake successful key is now: 0x%0.2X' % self.key)
+
+        return True
 
     def __resetkey(self):
         """
@@ -194,7 +185,7 @@ class MK312CommunicationWrapper(object):
         """
         Read data from the MK-312 of the given address.
         :param address: The address (int) from which we like to read.
-        :return: The content of the address as int value / flase if reading failed.
+        :return: The content of the address as int value / false if reading failed.
         """
 
         log.debug('Reading address: 0x%0.2X' % address)
@@ -328,9 +319,9 @@ class MK312CommunicationWrapper(object):
 
         return self.writedata(address=EEPROM_ADDRESS_FAVORITE_MODE, data=mode)
 
-    def modeSwitch(self, mode: int = MODE_WAVES):
+    def modeSet(self, mode: int = MODE_WAVES):
         """
-        Switch the actual mode.
+        Set the actual mode.
         :param mode: The mode for loading.
         :return: True or False if the mode is switched.
         """
@@ -369,6 +360,21 @@ class MK312CommunicationWrapper(object):
         else:
             log.debug('New mode is not switched!')
             return False
+
+    def modeGet(self):
+        """
+        Get the actual mode.
+        :return: The mode which is currently selected.
+        """
+
+        log.debug('Get the current mode.')
+
+        # Check if we have a key
+        if self.key is None:
+            self.handshake()
+
+        # Read back the mode for proving it
+        return self.readaddress(address=ADDRESS_CURRENT_MODE)
 
     def powerLevelSet(self, powerlevel: int = POWERLEVEL_NORMAL):
         """
@@ -468,6 +474,26 @@ class MK312CommunicationWrapper(object):
             return True
         else:
             return False
+
+    def adcRead(self):
+        """
+        Read the ADC.
+        :return: True -> ADC enabled / False -> ADC disabled.
+        """
+
+        log.debug('Status of the ADC.')
+
+        # Read R15 from device
+        register15 = self.readaddress(address=ADDRESS_R15)
+        log.debug('Value of R15 is: 0x%0.2X' % register15)
+
+        # Check if ADC is enabled/disabled
+        if register15 & (1 << REGISTER_15_ADCDISABLE):
+            # ADC is disabled (bit is not set)
+            return False
+        else:
+            # ADC is enabled (bit is set)
+            return True
 
     def levelASet(self, level: int = 0x00):
         """

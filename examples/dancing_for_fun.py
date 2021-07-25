@@ -23,7 +23,7 @@ def main():
         my312.adcDisable()
 
         # Load intense module
-        my312.modeSwitch(mode=MODE_INTENSE)
+        my312.modeSet(mode=MODE_INTENSE)
 
         # Set power level
         my312.powerLevelSet(powerlevel=POWERLEVEL_HIGH)

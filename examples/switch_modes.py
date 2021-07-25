@@ -20,7 +20,7 @@ def main():
 
         # Switch the modes
         for mode in range(MODE_WAVES, MODE_USER7, 1):
-            my312.modeSwitch(mode=mode)
+            my312.modeSet(mode=mode)
             sleep(4.0)
 
     except Exception as e:

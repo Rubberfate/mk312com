@@ -4,3 +4,5 @@ dist/
 build/
 mk312.egg-info
 mk312/__pycache__/
+examples/__pycache__/
+.vscode/
